@@ -2,19 +2,16 @@
 """Basic smoke test to verify the package was built correctly."""
 
 try:
-    import mksub
+    import audiosub
     print("✓ Package import successful")
 except ImportError as e:
     print(f"✗ Package import failed: {e}")
     exit(1)
 
 # Test that main function exists
-import importlib.util
-spec = importlib.util.spec_from_file_location("main", "main.py")
-main_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(main_module)
+import audiosub
 
-if hasattr(main_module, 'main'):
+if hasattr(audiosub, 'main'):
     print("✓ Main function exists")
 else:
     print("✗ Main function not found")

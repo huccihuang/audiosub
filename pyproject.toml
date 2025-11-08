@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-asub = "main:main"
+asub = "audiosub:main"
 
 [project.urls]
 Homepage = "https://github.com/huccihuang/audiosub"
