@@ -20,7 +20,7 @@
 通过 uv 的 `uvx` 命令安装并使用。
 
 ```bash
-uvx asub audio.mp3
+uvx audiosub <filename>
 # 将在当前目录生成 audio.srt 字幕文件
 ```
 
