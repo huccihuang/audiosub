@@ -4,16 +4,16 @@
 
 ## 特点
 
-- **资源占用小**：基于 mlx-whisper，专为 Apple Silicon 优化
-- **转换速度快**：利用 Apple Metal 加速，处理速度快
-- **准确度高**：使用 OpenAI Whisper 模型，支持多种语言
-- **使用简单**：命令行操作，一键生成字幕文件
+- Apple Silicon 专属优化：仅支持 M1/M2/M3 等 Apple 芯片
+- 速度极快：基于 Metal 加速的 mlx 框架
+- 占用极低：高效利用 GPU 资源
+- 准确度高：采用 OpenAI Whisper 模型，支持多语言识别
+- 一键生成：简单命令即可生成 .srt 字幕文件
 
-## Prerequisites
-
+## 系统要求
+- macOS（仅限 Apple Silicon 芯片）
 - Python 3.12+
-- macOS
-- uv
+- uv￼
 
 ## 使用方法
 
@@ -26,10 +26,10 @@ uvx audiosub <filename>
 
 ## 注意事项
 
-- **仅支持 macOS**：由于使用了 mlx 库，本工具仅能在 macOS 系统上运行
-- **Apple Silicon 优化**：在 Apple Silicon (M1/M2/M3) 芯片上性能最佳
-- **支持的音频格式**：支持常见的音频格式，如 MP3、WAV、M4A 等
-- **首次运行**：首次使用时会自动下载 Whisper 模型，请确保网络连接正常
+- 不支持 Intel 芯片的 Mac（mlx 框架仅支持 Apple Silicon）
+- 支持的音频格式：MP3、WAV、M4A 等
+- 首次运行会自动下载 Whisper 模型，请确保网络连接正常
+
 
 ## 依赖
 

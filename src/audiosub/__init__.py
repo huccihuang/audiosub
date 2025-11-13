@@ -3,36 +3,6 @@ import click
 import mlx_whisper
 
 
-def format_time(time):
-    '''将float格式的时间转换为字幕要求的格式 hh:mm:ss,ms'''
-    hours = int(time // 3600)
-    minutes = int((time % 3600) // 60)
-    seconds = int(time % 60)
-    milliseconds = int((time - int(time)) * 1000)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-
-
-def audio_to_subtitle(audio_file_path, output_file_path):
-    '''将音频文件转换为字幕文件'''
-
-    # 获取词级时间戳
-    result = mlx_whisper.transcribe(
-        audio_file_path,
-        word_timestamps=True
-    )
-
-    # 存放到文件中
-    with open(output_file_path, "w") as f:
-        for idx, segment in enumerate(result["segments"]):
-            start_time = format_time(segment["start"])
-            end_time = format_time(segment["end"])
-            f.write(
-                f"{idx + 1}\n"
-                f"{start_time} --> {end_time}\n"
-                f"{segment['text']}\n\n"
-            )
-
-
 @click.command()
 @click.argument('audio_file', type=click.Path(exists=True))
 def main(audio_file):
@@ -43,11 +13,6 @@ def main(audio_file):
 
     将在当前目录生成 audio.srt 字幕文件
     """
-    # 检查文件是否存在
-    if not os.path.exists(audio_file):
-        click.echo(f"错误：文件 '{audio_file}' 不存在", err=True)
-        return
-
     # 获取输入文件的基本名称（不含扩展名）
     base_name = os.path.splitext(os.path.basename(audio_file))[0]
 
@@ -65,5 +30,90 @@ def main(audio_file):
         raise
 
 
+def audio_to_subtitle(audio_file_path, output_file_path):
+    '''将音频文件转换为字幕文件'''
+
+    # 获取词级时间戳
+    result = mlx_whisper.transcribe(
+        audio_file_path,
+        path_or_hf_repo = 'mlx-community/whisper-turbo',
+        language = 'zh',
+        word_timestamps = True,
+    )
+
+
+    # 处理每个分段
+    segments = []
+    for segment in result["segments"]:
+        segments += process_segment(segment)
+
+    # 存放到文件中
+    with open(output_file_path, "w") as f:
+        for idx, segment in enumerate(segments):
+            f.write(
+                f"{idx + 1}\n"
+                f"{segment['start']} --> {segment['end']}\n"
+                f"{segment['text']}\n\n"
+            )
+
+
+def process_segment(segment):
+    '''
+    处理每个分段，包括
+    1. 去掉行末的标点符号
+    2. 行中有标点符号的句子拆分成两段或者更多
+    3. 处理时间
+
+    返回处理后的分段列表，每个分段的key包含start, end, text
+    '''
+    processed_segments = []
+    punctuations = (',', '。', '？', '！', '?', '!')
+
+    # 去掉行末的标点符号
+    if segment['text'].endswith(punctuations):
+        segment['text'] = segment['text'][:-1]
+
+    # 行中有标点符号的句子拆分
+    if ',' in segment['text']: # 如果句子中间有标点符号
+        # 从words里面找带有标点符号的词，并从这个词开始，将前后拆成两段
+        new_segment = {'text': ''}
+        for word in segment['words']:
+            if 'start' not in new_segment: # 如果是第一个词，记录开始时间
+                new_segment['start'] = word['start']
+            if word['word'].endswith(punctuations): 
+                # 如果是最后一个词
+                new_segment['end'] = word['end'] # 记录结束时间
+                new_segment['text'] += word['word'][:-1] # 去掉标点符号
+                processed_segments.append(new_segment) # 添加到分段列表
+                new_segment = {'text': ''} # 重置新分段
+            else:     
+                new_segment['text'] += word['word'] # 将词添加进去
+    else:
+        processed_segments.append(
+            {
+                'start': segment['start'],
+                'end': segment['end'],
+                'text': segment['text'],
+            }
+        )
+    
+    # 处理时间
+    for seg in processed_segments:
+        seg['start'] = format_time(seg['start'])
+        seg['end'] = format_time(seg['end'])
+        seg['text'] = seg['text'].strip()
+    
+    return processed_segments
+
+
+def format_time(time):
+    '''将float格式的时间转换为字幕要求的格式 hh:mm:ss,ms'''
+    hours = int(time // 3600)
+    minutes = int((time % 3600) // 60)
+    seconds = int(time % 60)
+    milliseconds = int((time - int(time)) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
 if __name__ == "__main__":
-    main()
+    main('./iflow_cli_hevc.mp4')

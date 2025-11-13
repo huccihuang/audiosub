@@ -11,3 +11,9 @@ wheels/
 
 # Agent configuration
 .iflow/
+
+# test files
+*.mov
+*.mp3
+*.mp4
+*.srt
