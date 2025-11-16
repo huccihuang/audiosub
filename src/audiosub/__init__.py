@@ -1,15 +1,18 @@
 import os
-import click
+import fire
 import mlx_whisper
 
 
-@click.command()
-@click.argument('audio_file', type=click.Path(exists=True))
-def main(audio_file):
-    """将音频文件转换为字幕文件
+def main():
+    fire.Fire(convert_audio_to_subtitle)
+
+
+def convert_audio_to_subtitle(audio_file):
+    """
+    将音频文件转换为字幕文件
 
     使用示例：
-        mksub audio.mp3
+        audiosub audio.mp3
 
     将在当前目录生成 audio.srt 字幕文件
     """
@@ -19,14 +22,14 @@ def main(audio_file):
     # 在当前工作目录生成输出文件
     output_file = f"{base_name}.srt"
 
-    click.echo(f"正在处理音频文件: {audio_file}")
-    click.echo(f"输出字幕文件: {output_file}")
+    print(f"正在处理音频文件: {audio_file}")
+    print(f"输出字幕文件: {output_file}")
 
     try:
         audio_to_subtitle(audio_file, output_file)
-        click.echo(f"✓ 字幕文件已生成: {output_file}")
+        print(f"✓ 字幕文件已生成: {output_file}")
     except Exception as e:
-        click.echo(f"错误：处理失败 - {str(e)}", err=True)
+        print(f"错误：处理失败 - {str(e)}")
         raise
 
 
@@ -113,7 +116,3 @@ def format_time(time):
     seconds = int(time % 60)
     milliseconds = int((time - int(time)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
-
-
-if __name__ == "__main__":
-    main('./iflow_cli_hevc.mp4')
