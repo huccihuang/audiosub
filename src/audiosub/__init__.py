@@ -16,6 +16,11 @@ def convert_audio_to_subtitle(audio_file):
 
     将在当前目录生成 audio.srt 字幕文件
     """
+    # 检查输入文件是否存在
+    if not os.path.exists(audio_file):
+        print(f"错误：输入文件不存在 - {audio_file}")
+        return
+
     # 获取输入文件的基本名称（不含扩展名）
     base_name = os.path.splitext(os.path.basename(audio_file))[0]
 
