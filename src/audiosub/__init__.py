@@ -1,6 +1,16 @@
 import os
 import fire
-import mlx_whisper
+
+MODEL_ID = "Qwen/Qwen3-ASR-1.7B"
+
+# 字幕拆行规则：优先按标点断句；超长句在词间停顿处断开，
+# 找不到停顿时放宽到 SOFT_MAX_CHARS，再不行硬切
+MAX_CHARS_PER_LINE = 18
+MAX_SECONDS_PER_LINE = 4.0
+SOFT_MAX_CHARS = 24
+MIN_GAP_SECONDS = 0.1
+
+PUNCTUATIONS = set("，。！？；：、…—·,.;:!?\"'()（）")
 
 
 def main():
@@ -39,83 +49,137 @@ def convert_audio_to_subtitle(audio_file):
 
 
 def audio_to_subtitle(audio_file_path, output_file_path):
-    '''将音频文件转换为字幕文件'''
+    """将音频文件转换为字幕文件"""
+    from mlx_qwen3_asr import transcribe
 
-    # 获取词级时间戳
-    result = mlx_whisper.transcribe(
+    def show_progress(event):
+        if event.get("event") == "chunk_completed":
+            print(
+                f"\r正在识别: {event['chunk_index']}/{event['total_chunks']}",
+                end="",
+                flush=True,
+            )
+        elif event.get("event") == "completed":
+            print()
+
+    result = transcribe(
         audio_file_path,
-        path_or_hf_repo = 'mlx-community/whisper-turbo',
-        language = 'zh',
-        word_timestamps = True,
+        model=MODEL_ID,
+        return_timestamps=True,
+        on_progress=show_progress,
     )
 
+    if not result.segments:
+        raise RuntimeError("识别结果为空或未获取到词级时间戳")
 
-    # 处理每个分段
-    segments = []
-    for segment in result["segments"]:
-        segments += process_segment(segment)
+    entries = build_subtitle_entries(result.segments, result.text)
 
-    # 存放到文件中
     with open(output_file_path, "w") as f:
-        for idx, segment in enumerate(segments):
+        for idx, entry in enumerate(entries):
             f.write(
                 f"{idx + 1}\n"
-                f"{segment['start']} --> {segment['end']}\n"
-                f"{segment['text']}\n\n"
+                f"{entry['start']} --> {entry['end']}\n"
+                f"{entry['text']}\n\n"
             )
 
 
-def process_segment(segment):
-    '''
-    处理每个分段，包括
-    1. 去掉行末的标点符号
-    2. 行中有标点符号的句子拆分成两段或者更多
-    3. 处理时间
+def build_subtitle_entries(words, text):
+    """
+    用词级时间戳 + 全文标点构建字幕条目：
+    1. 把 text 中的标点映射回 word 流作为断句点（标点是 ASR 加的，
+       词级时间戳流里没有标点 token）
+    2. 按标点切成句子
+    3. 超长句在停顿处拆分
+    """
+    breaks_after = map_punctuation_breaks(words, text)
 
-    返回处理后的分段列表，每个分段的key包含start, end, text
-    '''
-    processed_segments = []
-    punctuations = (',', '。', '？', '！', '?', '!')
+    sentences, cur = [], []
+    for wi, w in enumerate(words):
+        cur.append(w)
+        if wi in breaks_after:
+            sentences.append(cur)
+            cur = []
+    if cur:
+        sentences.append(cur)
 
-    # 去掉行末的标点符号
-    if segment['text'].endswith(punctuations):
-        segment['text'] = segment['text'][:-1]
+    entries = []
+    for sent in sentences:
+        for group in split_long_sentence(sent):
+            seg_text = "".join(w["text"] for w in group)
+            if seg_text.strip():
+                entries.append(
+                    {
+                        "start": format_time(group[0]["start"]),
+                        "end": format_time(group[-1]["end"]),
+                        "text": seg_text,
+                    }
+                )
+    return entries
 
-    # 行中有标点符号的句子拆分
-    if ',' in segment['text']: # 如果句子中间有标点符号
-        # 从words里面找带有标点符号的词，并从这个词开始，将前后拆成两段
-        new_segment = {'text': ''}
-        for word in segment['words']:
-            if 'start' not in new_segment: # 如果是第一个词，记录开始时间
-                new_segment['start'] = word['start']
-            if word['word'].endswith(punctuations): 
-                # 如果是最后一个词
-                new_segment['end'] = word['end'] # 记录结束时间
-                new_segment['text'] += word['word'][:-1] # 去掉标点符号
-                processed_segments.append(new_segment) # 添加到分段列表
-                new_segment = {'text': ''} # 重置新分段
-            else:     
-                new_segment['text'] += word['word'] # 将词添加进去
-    else:
-        processed_segments.append(
-            {
-                'start': segment['start'],
-                'end': segment['end'],
-                'text': segment['text'],
-            }
-        )
-    
-    # 处理时间
-    for seg in processed_segments:
-        seg['start'] = format_time(seg['start'])
-        seg['end'] = format_time(seg['end'])
-        seg['text'] = seg['text'].strip()
-    
-    return processed_segments
+
+def map_punctuation_breaks(words, text):
+    """
+    把 text 中紧跟在某个词后面的标点，映射为该词之后的断句点。
+    返回需要断句的词下标集合。
+    """
+    breaks_after = set()
+    pos = 0
+    for wi, w in enumerate(words):
+        idx = text.find(w["text"], pos)
+        if idx < 0:
+            continue  # 对齐失败则跳过该词
+        pos = idx + len(w["text"])
+        if pos < len(text) and text[pos] in PUNCTUATIONS:
+            breaks_after.add(wi)
+    return breaks_after
+
+
+def split_long_sentence(sentence):
+    """
+    拆分超长句：超过 MAX_CHARS_PER_LINE 字或 MAX_SECONDS_PER_LINE 秒时，
+    在目标位置附近找最大的词间间隔处断开；间隔太小且剩余不长则不拆
+    （整句放出，由 SOFT_MAX_CHARS 兜底防止无限长）。
+    """
+    text_len = sum(len(w["text"]) for w in sentence)
+    duration = sentence[-1]["end"] - sentence[0]["start"]
+    if text_len <= MAX_CHARS_PER_LINE and duration <= MAX_SECONDS_PER_LINE:
+        return [sentence]
+
+    groups, start_i, acc = [], 0, 0
+    for i in range(len(sentence)):
+        acc += len(sentence[i]["text"])
+        if acc > MAX_CHARS_PER_LINE or (
+            sentence[i]["end"] - sentence[start_i]["start"]
+        ) > MAX_SECONDS_PER_LINE:
+            # 在目标位置附近 ±8 词内找最大词间间隔
+            lo = max(start_i + 3, i - 8)
+            hi = min(i + 1, len(sentence))
+            best_j, best_gap = i, -1.0
+            for j in range(lo, hi):
+                gap = sentence[j]["start"] - sentence[j - 1]["end"]
+                if gap > best_gap:
+                    best_gap, best_j = gap, j
+            # 间隔太小且剩余不长 → 不拆，整句放出
+            rest = sum(len(x["text"]) for x in sentence[best_j:])
+            if best_gap < MIN_GAP_SECONDS and rest + acc <= SOFT_MAX_CHARS:
+                continue
+            groups.append(sentence[start_i:best_j])
+            start_i = best_j
+            acc = sum(len(x["text"]) for x in sentence[start_i : i + 1])
+    groups.append(sentence[start_i:])
+
+    # 拆完仍超 SOFT_MAX_CHARS 的组递归再拆
+    out = []
+    for g in groups:
+        if sum(len(w["text"]) for w in g) > SOFT_MAX_CHARS and len(g) > 3:
+            out.extend(split_long_sentence(g))
+        else:
+            out.append(g)
+    return out
 
 
 def format_time(time):
-    '''将float格式的时间转换为字幕要求的格式 hh:mm:ss,ms'''
+    """将float格式的时间转换为字幕要求的格式 hh:mm:ss,ms"""
     hours = int(time // 3600)
     minutes = int((time % 3600) // 60)
     seconds = int(time % 60)
